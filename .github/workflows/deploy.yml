@@ -1,12 +1,15 @@
 name: Deploy Extension Manifest
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
   push:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -15,10 +18,19 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
       - name: Cache .nuke/temp, ~/.nuget/packages
         uses: actions/cache@v4
@@ -26,7 +38,7 @@ jobs:
           path: |
             .nuke/temp
             ~/.nuget/packages
-          key: ${{ runner.os }}-${{ hashFiles('global.json', 'source/**/*.csproj') }}
+          key: ${{ runner.os }}-${{ hashFiles('global.json', 'build/**/*.csproj', 'build/**/*.props', 'build/**/*.targets') }}
 
       - name: 'Run: GenerateManifest'
         run: ./build.cmd GenerateManifest
@@ -37,6 +49,9 @@ jobs:
             echo "manifest.json not found!"
             exit 1
           fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
       - name: Prepare Pages artifact
         run: |
@@ -49,8 +64,10 @@ jobs:
           path: pages-artifact
 
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
 
       - name: Create Release Summary
         run: |
-          echo "# Extension Manifest Updated to https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/manifest.json"
+          echo "# Extension Manifest Updated" >> $GITHUB_STEP_SUMMARY
+          echo "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/manifest.json" >> $GITHUB_STEP_SUMMARY

@@ -36,9 +36,22 @@ class Build : NukeBuild
         .Before(GenerateManifest)
         .Executes(() =>
         {
-            if (Directory.Exists(OutputDirectory))
-                Directory.Delete(OutputDirectory, true);
             Directory.CreateDirectory(OutputDirectory);
+            foreach (string file in Directory.EnumerateFiles(OutputDirectory, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+            }
+
+            foreach (string file in Directory.EnumerateFiles(OutputDirectory))
+            {
+                File.Delete(file);
+            }
+
+            foreach (string directory in Directory.EnumerateDirectories(OutputDirectory))
+            {
+                Directory.Delete(directory, true);
+            }
+
             Serilog.Log.Information("Cleared output folder...");
         });
 

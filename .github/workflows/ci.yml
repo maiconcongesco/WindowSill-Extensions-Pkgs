@@ -1,12 +1,13 @@
 ﻿name: Validate Extensions
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate-pr:
@@ -15,13 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
       - name: Cache .nuke/temp, ~/.nuget/packages
         uses: actions/cache@v4
         with:
           path: |
             .nuke/temp
             ~/.nuget/packages
-          key: ${{ runner.os }}-${{ hashFiles('global.json', 'source/**/*.csproj') }}
+          key: ${{ runner.os }}-${{ hashFiles('global.json', 'build/**/*.csproj', 'build/**/*.props', 'build/**/*.targets') }}
 
       - name: 'Run: GenerateManifest'
         run: ./build.cmd GenerateManifest

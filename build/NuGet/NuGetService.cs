@@ -4,6 +4,7 @@ using NuGet.Models.NuGetRegistration;
 using NuGet.Models.NuGetSearch;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -19,7 +20,7 @@ internal class NuGetService : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions;
-    private AsyncLazy<string?> _searchServiceUrl;
+    private readonly AsyncLazy<string?> _searchServiceUrl;
 
     public NuGetService()
     {
@@ -29,6 +30,7 @@ internal class NuGetService : IDisposable
         };
 
         _httpClient = new HttpClient(handler);
+        _httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -59,13 +61,14 @@ internal class NuGetService : IDisposable
                     return null;
                 }
 
-                NuGetRegistrationResponse? response
-                    = await _httpClient.GetFromJsonAsync<NuGetRegistrationResponse>(
-                        packageFromSearch.registration,
-                        _jsonOptions);
+                IReadOnlyList<CatalogEntry> catalogEntries
+                    = await GetRegistrationCatalogEntriesAsync(packageFromSearch.registration);
 
-                // Get the latest version from the registration
-                CatalogEntry? latestItem = response?.items?.LastOrDefault()?.items?.LastOrDefault()?.catalogEntry;
+                CatalogEntry? latestItem
+                    = catalogEntries.LastOrDefault(
+                        entry => string.Equals(entry.version, packageFromSearch.version, StringComparison.OrdinalIgnoreCase))
+                    ?? catalogEntries.LastOrDefault();
+
                 if (latestItem is null)
                 {
                     Serilog.Log.Error("No catalog entry found for package {PackageId} on NuGet.org.", packageId);
@@ -94,7 +97,7 @@ internal class NuGetService : IDisposable
 
         bool hasDependencyOnWindowSillApi
             = catalogEntry.dependencyGroups?.Any(
-                group =>group.dependencies?.Any(
+                group => group.dependencies?.Any(
                     dep => string.Equals(dep.packageId, "WindowSill.Api", StringComparison.OrdinalIgnoreCase)) ?? false) ?? false;
 
         bool hasDescription = !string.IsNullOrWhiteSpace(catalogEntry.description);
@@ -109,6 +112,45 @@ internal class NuGetService : IDisposable
             && hasVersion
             && hasAuthors
             && catalogEntry.listed;
+    }
+
+    private async Task<IReadOnlyList<CatalogEntry>> GetRegistrationCatalogEntriesAsync(string registrationUrl)
+    {
+        NuGetRegistrationResponse? response
+            = await _httpClient.GetFromJsonAsync<NuGetRegistrationResponse>(
+                registrationUrl,
+                _jsonOptions);
+
+        if (response?.items is null)
+        {
+            return [];
+        }
+
+        List<CatalogEntry> catalogEntries = [];
+        foreach (Item page in response.items)
+        {
+            IEnumerable<Item>? packageItems = page.items;
+            if ((packageItems is null || !packageItems.Any()) && !string.IsNullOrWhiteSpace(page.id))
+            {
+                Item? pagedResponse = await _httpClient.GetFromJsonAsync<Item>(page.id, _jsonOptions);
+                packageItems = pagedResponse?.items;
+            }
+
+            foreach (Item packageItem in packageItems ?? [])
+            {
+                if (packageItem.catalogEntry is not null)
+                {
+                    catalogEntries.Add(packageItem.catalogEntry);
+                }
+            }
+
+            if (page.catalogEntry is not null)
+            {
+                catalogEntries.Add(page.catalogEntry);
+            }
+        }
+
+        return catalogEntries;
     }
 
     private async Task<NuGetPackageFromSearchResponse?> SearchPackagesAsync(string packageId)
